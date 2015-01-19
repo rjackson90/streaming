@@ -1,0 +1,5 @@
+[package]
+
+name = "streaming"
+version = "0.0.1"
+authors = ["Rich Jackson <rjackson90@gmail.com>"]
