@@ -35,7 +35,8 @@ impl State {
     /// so this method mainly consists of initializing a new State object.
     /// The application is responsible for providing a few pieces of important
     /// information, such as its SSRC, the available bandwidth, and the expected 
-    /// size of the first packet.
+    /// size of the first packet. See section 6.3.2 of [RFC 3550]
+    /// (tools.ietf.org/html/rfc3550) for more information.
     ///
     /// # Arguments
     ///
