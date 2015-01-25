@@ -1,5 +1,7 @@
 extern crate time;
 
+use self::time::SteadyTime;
+
 use std::rand;
 use std::cmp;
 use std::collections::HashMap;
@@ -35,16 +37,16 @@ struct Member {
 
 #[allow(dead_code)]
 struct State {
-    tp: time::SteadyTime,   // The last time an RTCP packet was transmitted
-    tc: time::SteadyTime,   // Current time
-    tn: time::SteadyTime,   // Transmission interval
-    pmembers: i32,          // Previous estimate of member count
-    members: i32,           // Current estimate of member count
-    senders: i32,           // Current estimate of sender count
-    rtcp_bw: i32,           // Target RTCP bandwidth, in octets per second
-    we_sent: bool,          // Flag: True if application sent data recently
-    avg_rtcp_size: f32,     // Average compound RTCP packet size, in octets
-    initial: bool,          // Flag: True if a packet has not yet been sent
+    tp: SteadyTime,     // The last time an RTCP packet was transmitted
+    tc: SteadyTime,     // Current time
+    tn: SteadyTime,     // Transmission interval
+    pmembers: i32,      // Previous estimate of member count
+    members: i32,       // Current estimate of member count
+    senders: i32,       // Current estimate of sender count
+    rtcp_bw: i32,       // Target RTCP bandwidth, in octets per second
+    we_sent: bool,      // Flag: True if application sent data recently
+    avg_rtcp_size: f32, // Average compound RTCP packet size, in octets
+    initial: bool,      // Flag: True if a packet has not yet been sent
     member_table: HashMap<Ssrc, Member> // A List of all members of the current session
 }
 
@@ -76,9 +78,9 @@ impl State {
     #[allow(dead_code)]
     pub fn initialize(our_ssrc: Ssrc, bandwidth: i32, pkt_size: i32) -> State {
         let mut result = State {
-            tp: time::SteadyTime::now(),
-            tc: time::SteadyTime::now(),
-            tn: time::SteadyTime::now(), // Dummy value, to be recalculated later
+            tp: SteadyTime::now(),
+            tc: SteadyTime::now(),
+            tn: SteadyTime::now(), // Dummy value, to be recalculated later
             pmembers: 1,
             members: 1,
             senders: 0,
