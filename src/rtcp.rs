@@ -1,6 +1,10 @@
+extern crate time;
+
 use std::rand;
 use std::cmp;
 use std::collections::HashMap;
+use std::time::Duration;
+use std::i64;
 
 use super::{Ssrc, Csrc};
 
@@ -31,16 +35,16 @@ struct Member {
 
 #[allow(dead_code)]
 struct State {
-    tp: f32,            // The last time an RTCP packet was transmitted
-    tc: f32,            // Current time
-    tn: f32,            // Next scheduled transmission time
-    pmembers: i32,      // Previous estimate of member count
-    members: i32,       // Current estimate of member count
-    senders: i32,       // Current estimate of sender count
-    rtcp_bw: i32,       // Target RTCP bandwidth, in octets per second
-    we_sent: bool,      // Flag: True if application sent data recently
-    avg_rtcp_size: f32, // Average compound RTCP packet size, in octets
-    initial: bool,      // Flag: True if a packet has not yet been sent
+    tp: time::SteadyTime,   // The last time an RTCP packet was transmitted
+    tc: time::SteadyTime,   // Current time
+    tn: time::SteadyTime,   // Transmission interval
+    pmembers: i32,          // Previous estimate of member count
+    members: i32,           // Current estimate of member count
+    senders: i32,           // Current estimate of sender count
+    rtcp_bw: i32,           // Target RTCP bandwidth, in octets per second
+    we_sent: bool,          // Flag: True if application sent data recently
+    avg_rtcp_size: f32,     // Average compound RTCP packet size, in octets
+    initial: bool,          // Flag: True if a packet has not yet been sent
     member_table: HashMap<Ssrc, Member> // A List of all members of the current session
 }
 
@@ -72,9 +76,9 @@ impl State {
     #[allow(dead_code)]
     pub fn initialize(our_ssrc: Ssrc, bandwidth: i32, pkt_size: i32) -> State {
         let mut result = State {
-            tp: 0.0,
-            tc: 0.0,
-            tn: 0.0, // Dummy value, to be recalculated after struct initialized
+            tp: time::SteadyTime::now(),
+            tc: time::SteadyTime::now(),
+            tn: time::SteadyTime::now(), // Dummy value, to be recalculated later
             pmembers: 1,
             members: 1,
             senders: 0,
@@ -92,7 +96,7 @@ impl State {
                                             intervals: 0});
         
         // Calculate the initial tx interval and return
-        result.tn = result.tx_interval();
+        result.tn = result.tc + result.tx_interval();
         result
     }
 
@@ -108,7 +112,7 @@ impl State {
     ///
     /// The return value is the time interval between RTCP packets, in seconds.
     #[allow(unstable)]
-    pub fn tx_interval(&self) -> f32 {
+    pub fn tx_interval(&self) -> Duration {
         
         let few_senders = self.senders as f32 <= 0.25 * self.members as f32;
 
@@ -116,32 +120,46 @@ impl State {
             true    => {
                 match self.we_sent {
                     true    => {
-                        (self.avg_rtcp_size / self.rtcp_bw as f32 * 0.25) * // C
-                        self.senders as f32 // n
+                        Duration::microseconds((self.avg_rtcp_size as f32 / 
+                                                self.rtcp_bw as f32 * 
+                                                0.25 * 
+                                                1000000.0 ) as i64 * 
+                                               self.senders as i64)
                     },
                     
                     false   => {
-                        (self.avg_rtcp_size / self.rtcp_bw as f32 * 0.75) * // C
-                        (self.members - self.senders) as f32 // n
+                        Duration::microseconds((self.avg_rtcp_size as f32 /
+                                                self.rtcp_bw as f32 *
+                                                0.75 *
+                                                1000000.0 ) as i64 *
+                                               (self.members - self.senders) as i64)
                     },
                 }
             },
             
             false   => {
-                (self.avg_rtcp_size / self.rtcp_bw as f32) * // C
-                self.members as f32 // n
+                Duration::microseconds((self.avg_rtcp_size as f32 /
+                                        self.rtcp_bw as f32 *
+                                        1000000.0 ) as i64 *
+                                       self.members as i64)
             },
         };
 
-        let t_min = if self.initial {2.5} else {5.0};
+        let t_min = if self.initial {
+            Duration::milliseconds(2500)
+        } else {
+            Duration::milliseconds(5000)
+        };
         
-        let t_d = match cmp::partial_max(t_min, c_times_n) {
-            Some(max)   => max,
-            None        => t_min
+        let t_d = cmp::max(t_min, c_times_n);
+
+        let t_d_micros = match t_d.num_microseconds() {
+            Some(micros)=> micros,
+            None        => i64::MAX // Assumption: None is always an overflow
         };
 
-        let t_rand = (0.5 * t_d) + (rand::random::<f32>() * t_d);
-        t_rand / 1.21828
+        let t_rand = ( t_d_micros / 2 ) + (rand::random::<i64>() * t_d_micros);
+        Duration::microseconds((t_rand as f64 / 1.21828) as i64)
     }
 
     #[allow(dead_code)]
@@ -170,16 +188,7 @@ impl State {
                     }
                 }
 
-                // "reverse reconsideration" algorithm as per RFC 3550 6.3.4
-                if self.members < self.pmembers {
-                    self.tn = self.tc + (self.members as f32 / self.pmembers as f32) * 
-                              (self.tn - self.tc);
-                    
-                    self.tp = self.tc - (self.members as f32 / self.pmembers as f32) * 
-                              (self.tc - self.tp);
-                    
-                    self.pmembers = self.members;
-                }
+                self.reverse_reconsideration();
             },
 
             PacketType::Rtp => {
@@ -199,6 +208,16 @@ impl State {
 
         self.avg_rtcp_size = (1.0 / 16.0) * packet_size + (15.0 / 16.0) * 
                              self.avg_rtcp_size;
+    }
+
+    fn reverse_reconsideration(&mut self) {
+        if self.members < self.pmembers {
+            self.tn = self.tc + ((self.tn - self.tc) * (self.members / self.pmembers));
+
+            self.tp = self.tc - ((self.tc - self.tp) * (self.members / self.pmembers));
+
+            self.pmembers = self.members;
+        }
     }
 
     #[allow(dead_code)]
