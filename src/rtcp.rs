@@ -260,14 +260,13 @@ impl State {
         } 
     }
 
-
     #[allow(dead_code)]
     fn tx_timer_expire(&mut self) {
         let t = self.tx_interval();
 
         match (self.tp + t).cmp(&self.tc) {
             cmp::Ordering::Less | cmp::Ordering::Equal => {
-                self.send_packet();
+                // TODO: signal the host application to send a packet
 
                 self.tp = self.tc;
                 self.tn = self.tc + self.tx_interval();
@@ -284,16 +283,47 @@ impl State {
         self.pmembers = self.members;
     }
 
-    fn send_packet(&mut self) {
+    #[allow(unused_variables)]
+    #[allow(dead_code)]
+    fn pkt_send_notify(&mut self, packet_type: Option<PacketType>, packet_size: i32,
+                       our_ssrc: Ssrc) {
         self.initial = false;
-        
-        let packet_size = 5; // Made up number, substitute actual packet size
         self.avg_rtcp_size = self.update_avg_packet_size(packet_size);
 
-        panic!("The implementation of rtcp.State.send_packet is incomplete!");
+        match packet_type {
+            None => (),
+            Some(p_type) => match p_type {
+                PacketType::Rtp => {
+                    if self.we_sent == false {
+                        self.we_sent = true;
+                        self.senders += 1;
+                    }
+                    
+                    let sender = self.member_table.get_mut(&our_ssrc).expect(
+                                     "This machine is not in the member table!");
+                    sender.intervals = 0;
+
+                    self.reverse_reconsideration();
+                }
+                _ => ()
+            }
+        };
     }
 
     fn update_avg_packet_size(&self, size: i32) -> f32 {
         (1.0 / 16.0) * size as f32 + (15.0 / 16.0) * self.avg_rtcp_size
+    }
+
+    #[allow(dead_code)]
+    fn leave_session(&mut self) {
+        if self.members >= 50 {
+            // This implementation is designed around having <10 members or so at
+            // all times. It's not worth implementing the BYE backoff algorithm
+            // from RFC 3550 6.3.7 for such a rare case, so if there are a lot
+            // of members in this session, no BYE will be transmitted and departing
+            // members will simply time out. 
+        }
+        
+        // TODO: signal the host application to send a BYE
     }
 }
