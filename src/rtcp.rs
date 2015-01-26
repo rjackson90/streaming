@@ -2,7 +2,7 @@ extern crate time;
 
 use self::time::SteadyTime;
 
-use std::rand;
+use std::rand::{random, Closed01};
 use std::cmp;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -119,9 +119,9 @@ impl State {
         let few_senders = self.senders as f32 <= 0.25 * self.members as f32;
 
         let c_times_n = match few_senders {
-            true    => {
+            true => {
                 match self.we_sent {
-                    true    => {
+                    true => {
                         Duration::microseconds((self.avg_rtcp_size as f32 / 
                                                 self.rtcp_bw as f32 * 
                                                 0.25 * 
@@ -129,7 +129,7 @@ impl State {
                                                self.senders as i64)
                     },
                     
-                    false   => {
+                    false => {
                         Duration::microseconds((self.avg_rtcp_size as f32 /
                                                 self.rtcp_bw as f32 *
                                                 0.75 *
@@ -139,7 +139,7 @@ impl State {
                 }
             },
             
-            false   => {
+            false => {
                 Duration::microseconds((self.avg_rtcp_size as f32 /
                                         self.rtcp_bw as f32 *
                                         1000000.0 ) as i64 *
@@ -160,13 +160,16 @@ impl State {
             None        => i64::MAX // Assumption: None is always an overflow
         };
 
-        let t_rand = ( t_d_micros / 2 ) + (rand::random::<i64>() * t_d_micros);
-        Duration::microseconds((t_rand as f64 / 1.21828) as i64)
+        let Closed01(rand) = random::<Closed01<f64>>();
+
+        let t_rand = ( t_d_micros as f64 / 2.0 ) + 
+                     ( rand * t_d_micros as f64 );
+        Duration::microseconds((t_rand / 1.21828) as i64)
     }
 
     #[allow(dead_code)]
     #[allow(unused_variables)]
-    pub fn pkt_recv_notify(&mut self, packet_type: PacketType, packet_size: f32, 
+    pub fn pkt_recv_notify(&mut self, packet_type: PacketType, packet_size: i32, 
                        ssrc: Ssrc, csrcs: &[Csrc]) {
         match packet_type{
             PacketType::Bye => {
@@ -179,7 +182,7 @@ impl State {
                                 self.members -= 1;
                             },
 
-                            Some(MemberState::Sending)    => {
+                            Some(MemberState::Sending) => {
                                 member.status = Some(MemberState::Bye);
                                 self.members -= 1;
                                 self.senders -= 1;
@@ -200,7 +203,7 @@ impl State {
                 }
             },
             
-            _   => {
+            _ => {
                 self.update_member_status(ssrc, false);
                 for &ident in csrcs.iter() {
                     self.update_member_status(ident, false);
@@ -208,8 +211,7 @@ impl State {
             },
         }
 
-        self.avg_rtcp_size = (1.0 / 16.0) * packet_size + (15.0 / 16.0) * 
-                             self.avg_rtcp_size;
+        self.avg_rtcp_size = self.update_avg_packet_size(packet_size);
     }
 
     fn reverse_reconsideration(&mut self) {
@@ -226,16 +228,16 @@ impl State {
     fn update_member_status(&mut self, id: Ssrc, is_sender: bool) {
         let exists: bool;
         match self.member_table.get_mut(&id)  {
-            None            => exists = false,
-            Some(member)    => {
+            None => exists = false,
+            Some(member) => {
                 exists = true;
                 member.intervals = 0;   // Member is in the table, mark as seen
                 match member.status {
-                    None    => {
+                    None => {
                         member.status = Some(MemberState::Listening); // Validate member
                         self.members += 1;
                     },
-                    _       => (), // Member has already been validated
+                    _ => (), // Member has already been validated
                 }
             },
         };
@@ -255,6 +257,43 @@ impl State {
                 self.members += 1;
                 self.senders += 1;
             }
-        }       
+        } 
+    }
+
+
+    #[allow(dead_code)]
+    fn tx_timer_expire(&mut self) {
+        let t = self.tx_interval();
+
+        match (self.tp + t).cmp(&self.tc) {
+            cmp::Ordering::Less | cmp::Ordering::Equal => {
+                self.send_packet();
+
+                self.tp = self.tc;
+                self.tn = self.tc + self.tx_interval();
+            },
+            
+            cmp::Ordering::Greater => {
+                self.tn = self.tp + t;
+            }
+        };
+
+        // TODO: set transmission timer to expire at time tn
+
+
+        self.pmembers = self.members;
+    }
+
+    fn send_packet(&mut self) {
+        self.initial = false;
+        
+        let packet_size = 5; // Made up number, substitute actual packet size
+        self.avg_rtcp_size = self.update_avg_packet_size(packet_size);
+
+        panic!("The implementation of rtcp.State.send_packet is incomplete!");
+    }
+
+    fn update_avg_packet_size(&self, size: i32) -> f32 {
+        (1.0 / 16.0) * size as f32 + (15.0 / 16.0) * self.avg_rtcp_size
     }
 }
