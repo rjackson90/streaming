@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use std::i64;
 
-use super::{Ssrc, Csrc};
+use super::super::{Ssrc, Csrc};
 
 #[allow(dead_code)]
 enum PacketType {
@@ -303,11 +303,12 @@ impl State {
                                      "This machine is not in the member table!");
                     sender.intervals = 0;
 
-                    self.reverse_reconsideration();
                 }
                 _ => ()
             }
         };
+
+        self.reverse_reconsideration();
     }
 
     fn update_avg_packet_size(&self, size: i32) -> f32 {
